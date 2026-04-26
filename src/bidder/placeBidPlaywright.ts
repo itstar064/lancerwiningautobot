@@ -3,9 +3,13 @@ import { runExclusive, getSharedContext } from "@/browser/lancersContext";
 import { delay } from "@/utils";
 import type { ScrapedJobType } from "@/types/job";
 import type { Page } from "playwright";
+import config from "@/config";
 
 const rnd = (a: number, b: number) =>
   a + Math.floor(Math.random() * (b - a + 1));
+
+const bidPause = () =>
+  rnd(config.BID_BROWSER_DELAY_MIN_MS, config.BID_BROWSER_DELAY_MAX_MS);
 
 /** Next milestone amount (JPY) from scraped price; step 1000, min 1000. */
 export const pickMilestoneAmountJPY = (
@@ -20,10 +24,11 @@ export const pickMilestoneAmountJPY = (
   return Math.max(1000, stepped);
 };
 
-/** "2026年05月11日" — two weeks from now (local). */
-export const getCompletionDateJapanese = (): string => {
+/** 完了予定日: `daysFromToday` from now (local). Env: `BID_COMPLETION_DAYS`. */
+export const getCompletionDateJapanese = (daysFromToday?: number): string => {
+  const days = daysFromToday ?? config.BID_COMPLETION_DAYS;
   const d = new Date();
-  d.setDate(d.getDate() + 14);
+  d.setDate(d.getDate() + days);
   const y = d.getFullYear();
   const mo = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -119,7 +124,7 @@ const gotoProposeFormViaDetailPage = async (page: Page, jobId: string) => {
   console.log(`[BID] Open work detail: ${detailUrl}`);
   await page.goto(detailUrl, { waitUntil: "load", timeout: 90_000 });
   await page.waitForLoadState("domcontentloaded");
-  await delay(rnd(800, 1800));
+  await delay(bidPause());
 
   if (page.url().includes("/user/login")) {
     throw new Error("Redirected to login; session may have expired");
@@ -137,13 +142,13 @@ const gotoProposeFormViaDetailPage = async (page: Page, jobId: string) => {
   const href = await proposeLink.getAttribute("href");
   console.log(`[BID] Click 提案する → ${href || ""}`);
   await proposeLink.scrollIntoViewIfNeeded();
-  await delay(rnd(500, 1200));
+  await delay(bidPause());
   await Promise.all([
     page.waitForURL(/\/work\/propose_start\//, { timeout: 60_000 }),
     proposeLink.click(),
   ]);
   await page.waitForLoadState("load");
-  await delay(rnd(1000, 2000));
+  await delay(bidPause());
 };
 
 /**
@@ -174,18 +179,18 @@ export async function placeBidWithSharedContext(
       const nda = page.locator("#ProposalIsAgreement");
       if (await nda.isVisible().catch(() => false)) {
         await nda.check({ force: true });
-        await delay(rnd(500, 1200));
+        await delay(bidPause());
         console.log("[BID] NDA checkbox checked");
       }
 
       await fillProposalDescription(page, bidText);
-      await delay(rnd(1000, 2500));
+        await delay(bidPause());
 
       // 見積 (optional)
       const est = page.locator('textarea[name="data[Proposal][estimate]"]');
       if (await est.count()) {
         await est.first().fill(getEstimateTemplate());
-        await delay(rnd(800, 2000));
+        await delay(bidPause());
         console.log("[BID] Filled data[Proposal][estimate]");
       }
 
@@ -194,7 +199,7 @@ export async function placeBidWithSharedContext(
       const numIn = page.locator('input[type="number"][step="1000"]').first();
       if (await numIn.isVisible().catch(() => false)) {
         await numIn.fill(String(amount));
-        await delay(rnd(800, 1800));
+        await delay(bidPause());
       }
 
       // 完了予定日 (react-datepicker text input)
@@ -205,7 +210,7 @@ export async function placeBidWithSharedContext(
       if (await dateInput.isVisible().catch(() => false)) {
         await dateInput.fill(dateStr);
         await page.keyboard.press("Tab");
-        await delay(rnd(1000, 2000));
+        await delay(bidPause());
         console.log(`[BID] Set completion date: ${dateStr}`);
       }
 
@@ -214,7 +219,7 @@ export async function placeBidWithSharedContext(
         'input#form_end[type="submit"][value="内容を確認する"]',
       );
       await toConfirm.waitFor({ state: "visible", timeout: 25000 });
-      await delay(rnd(1000, 3000));
+      await delay(bidPause());
       await Promise.all([
         page.waitForURL(/propose_confirm/, { timeout: 60000 }),
         toConfirm.click(),
@@ -225,7 +230,7 @@ export async function placeBidWithSharedContext(
         'input#form_end[type="submit"][value="利用規約に同意して提案する"]',
       );
       await finish.waitFor({ state: "visible", timeout: 30000 });
-      await delay(rnd(1000, 3000));
+      await delay(bidPause());
       await finish.click();
       await page
         .waitForLoadState("networkidle", { timeout: 60000 })

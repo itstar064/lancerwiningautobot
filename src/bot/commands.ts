@@ -119,7 +119,9 @@ const setup_commands = async (bot: Telegraf) => {
           return;
         }
         if (!canPlaceBidThisHour()) {
-          await ctx.answerCbQuery("Hourly bid limit (5) reached. Try later.");
+          await ctx.answerCbQuery(
+            `Bid limit (${config.BID_MAX_PER_WINDOW} / ${config.BID_RATE_WINDOW_MS}ms) reached. Try later.`,
+          );
           placingBid = false;
           return;
         }

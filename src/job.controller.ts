@@ -2,6 +2,7 @@ import { sendMessage, sendBidResultNotification } from "./bot/telegram";
 import Job from "./models/Job";
 import { ScrapedJobType } from "./types/job";
 import { delay } from "./utils";
+import config from "@/config";
 import {
   shouldBid,
   generateBidFromAPI,
@@ -132,7 +133,9 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
           `[BID] Skipped: filters (price empty, proposals>=30, or desc<=50) jobId=${jobid}`,
         );
       } else if (!canPlaceBidThisHour()) {
-        console.log(`[BID] Skipped: max 5 bids per hour; jobId=${jobid}`);
+        console.log(
+          `[BID] Skipped: bid rate limit (${config.BID_MAX_PER_WINDOW} per ${config.BID_RATE_WINDOW_MS}ms); jobId=${jobid}`,
+        );
       } else {
         const bidText = await generateBidFromAPI(job);
         if (!bidText) {

@@ -19,7 +19,10 @@ const SEARCH_USER_AGENT =
 const SEARCH_REFERER = "https://www.lancers.jp/mypage";
 const AXIOS_TIMEOUT_MS = 20000;
 
-const rndScrapeMs = () => 4000 + Math.floor(Math.random() * 4001);
+const rndScrapeMs = () => {
+  const { SCRAPE_DELAY_MIN_MS: a, SCRAPE_DELAY_MAX_MS: b } = config;
+  return a + Math.floor(Math.random() * (b - a + 1));
+};
 
 const fetchSearchHtml = async (url: string, cookieHeader: string) => {
   const res = await axios.get(url, {

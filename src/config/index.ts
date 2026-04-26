@@ -18,6 +18,34 @@ const BID_API_TIMEOUT_MS = Number(process.env.BID_API_TIMEOUT_MS) || 120_000;
 const _bidSrc = (process.env.BID_TEXT_SOURCE || "template").toLowerCase();
 const BID_TEXT_SOURCE: "api" | "template" = _bidSrc === "api" ? "api" : "template";
 
+/** Random pause between Playwright steps on propose pages (ms). */
+const BID_BROWSER_DELAY_MIN_MS =
+  Math.max(0, Number(process.env.BID_BROWSER_DELAY_MIN_MS) || 1000);
+const BID_BROWSER_DELAY_MAX_MS = Math.max(
+  BID_BROWSER_DELAY_MIN_MS,
+  Number(process.env.BID_BROWSER_DELAY_MAX_MS) || 3000,
+);
+
+/** 完了予定日: today + this many days (Lancers form). */
+const BID_COMPLETION_DAYS = Math.max(
+  1,
+  Number(process.env.BID_COMPLETION_DAYS) || 14,
+);
+
+/** Max autobids per rolling window (anti-ban + platform courtesy). */
+const BID_MAX_PER_WINDOW = Math.max(1, Number(process.env.BID_MAX_PER_WINDOW) || 5);
+const BID_RATE_WINDOW_MS = Math.max(
+  60_000,
+  Number(process.env.BID_RATE_WINDOW_MS) || 60 * 60 * 1000,
+);
+
+/** Cooldown between full scrape loop iterations (ms). */
+const SCRAPE_DELAY_MIN_MS = Math.max(0, Number(process.env.SCRAPE_DELAY_MIN_MS) || 4000);
+const SCRAPE_DELAY_MAX_MS = Math.max(
+  SCRAPE_DELAY_MIN_MS,
+  Number(process.env.SCRAPE_DELAY_MAX_MS) || 8000,
+);
+
 let config_missing = false;
 
 if (!BOT_TOKEN) {
@@ -64,6 +92,13 @@ interface Config {
   BID_API_TIMEOUT_MS: number;
   /** Use external API vs local `data/template.txt` for proposal body. */
   BID_TEXT_SOURCE: "api" | "template";
+  BID_BROWSER_DELAY_MIN_MS: number;
+  BID_BROWSER_DELAY_MAX_MS: number;
+  BID_COMPLETION_DAYS: number;
+  BID_MAX_PER_WINDOW: number;
+  BID_RATE_WINDOW_MS: number;
+  SCRAPE_DELAY_MIN_MS: number;
+  SCRAPE_DELAY_MAX_MS: number;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -81,6 +116,13 @@ const config: Config = {
   BID_API_COUNT,
   BID_API_TIMEOUT_MS,
   BID_TEXT_SOURCE,
+  BID_BROWSER_DELAY_MIN_MS,
+  BID_BROWSER_DELAY_MAX_MS,
+  BID_COMPLETION_DAYS,
+  BID_MAX_PER_WINDOW,
+  BID_RATE_WINDOW_MS,
+  SCRAPE_DELAY_MIN_MS,
+  SCRAPE_DELAY_MAX_MS,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };
