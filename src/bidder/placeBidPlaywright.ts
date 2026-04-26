@@ -111,7 +111,43 @@ const fillProposalDescription = async (page: Page, bidText: string) => {
 };
 
 /**
- * Lancers /work/propose_start/{id}?proposeReferer=  flow: description, optional estimate, amount + date, confirm + finish.
+ * Lancers: direct `/work/propose_start/{id}` can redirect to detail or a shell without
+ * the real form. Open `/work/detail/{id}` and use the same `提案する` link as the site.
+ */
+const gotoProposeFormViaDetailPage = async (page: Page, jobId: string) => {
+  const detailUrl = `https://www.lancers.jp/work/detail/${jobId}`;
+  console.log(`[BID] Open work detail: ${detailUrl}`);
+  await page.goto(detailUrl, { waitUntil: "load", timeout: 90_000 });
+  await page.waitForLoadState("domcontentloaded");
+  await delay(rnd(800, 1800));
+
+  if (page.url().includes("/user/login")) {
+    throw new Error("Redirected to login; session may have expired");
+  }
+
+  const body = await page.content();
+  if (body.includes("既に提案") || body.includes("すでに応募")) {
+    throw new Error("ALREADY_APPLIED");
+  }
+
+  const proposeLink = page
+    .locator('a.p-work-detail__righter-button[href*="/work/propose_start/"]')
+    .first();
+  await proposeLink.waitFor({ state: "visible", timeout: 25_000 });
+  const href = await proposeLink.getAttribute("href");
+  console.log(`[BID] Click 提案する → ${href || ""}`);
+  await proposeLink.scrollIntoViewIfNeeded();
+  await delay(rnd(500, 1200));
+  await Promise.all([
+    page.waitForURL(/\/work\/propose_start\//, { timeout: 60_000 }),
+    proposeLink.click(),
+  ]);
+  await page.waitForLoadState("load");
+  await delay(rnd(1000, 2000));
+};
+
+/**
+ * Lancers: detail page → 提案する → propose form. Then fill, confirm, submit.
  */
 export async function placeBidWithSharedContext(
   job: ScrapedJobType,
@@ -126,25 +162,12 @@ export async function placeBidWithSharedContext(
   return runExclusive(async () => {
     const context = await getSharedContext();
     const page = await context.newPage();
-    const url = `https://www.lancers.jp/work/propose_start/${jobId}?proposeReferer=`;
 
     try {
-      await page.goto(url, { waitUntil: "load", timeout: 90_000 });
-      await page.waitForLoadState("domcontentloaded");
-      await delay(rnd(1000, 2000));
+      await gotoProposeFormViaDetailPage(page, jobId);
 
       if (page.url().includes("/user/login")) {
         throw new Error("Redirected to login; session may have expired");
-      }
-
-      const body = await page.content();
-      if (body.includes("既に提案") || body.includes("すでに応募")) {
-        console.log(`[BID] Already applied for job ${jobId}`);
-        return false;
-      }
-
-      if (/\/work\/(search|mypage)\b/.test(page.url()) && !body.includes("Proposal")) {
-        console.log(`[BID] Landed on ${page.url()} without propose form; check job id.`);
       }
 
       // NDA (optional)
@@ -220,7 +243,12 @@ export async function placeBidWithSharedContext(
       console.log(`[BID] Ambiguous end state; url=${endUrl}`);
       return true;
     } catch (e) {
-      console.error(`[ERROR] placeBid: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (msg === "ALREADY_APPLIED") {
+        console.log(`[BID] Already applied for job ${jobId}`);
+        return false;
+      }
+      console.error(`[ERROR] placeBid: ${msg}`);
       return false;
     } finally {
       await page.close().catch(() => undefined);
