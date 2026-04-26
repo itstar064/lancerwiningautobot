@@ -2,6 +2,7 @@ import { getEstimateTemplate } from "./templates";
 import { runExclusive, getSharedContext } from "@/browser/lancersContext";
 import { delay } from "@/utils";
 import type { ScrapedJobType } from "@/types/job";
+import type { Page } from "playwright";
 
 const rnd = (a: number, b: number) =>
   a + Math.floor(Math.random() * (b - a + 1));
@@ -29,14 +30,94 @@ export const getCompletionDateJapanese = (): string => {
   return `${y}年${mo}月${day}日`;
 };
 
+/** Prefer numeric id from /work/detail/12345, then job.id, then last path segment. */
+const resolveLancersJobId = (job: ScrapedJobType): string | null => {
+  const fromDetail = job.url?.match(/\/work\/detail\/(\d+)/)?.[1];
+  if (fromDetail) return fromDetail;
+  const raw =
+    (job.id != null && String(job.id)) ||
+    job.url?.split("?")[0]?.split("/").filter(Boolean).pop() ||
+    "";
+  if (/^\d+$/.test(String(raw))) return String(raw);
+  const fromAny = String(raw).match(/(\d{4,})/);
+  return fromAny ? fromAny[1] : null;
+};
+
 /**
- * Lancers /work/propose_start/{id} flow (2026 UI): description, optional estimate, milestone amount + date, confirm + finish.
+ * 提案文欄: DOM differs (id vs name, lazy paint). Primary OR-wait, then fallbacks.
+ */
+const fillProposalDescription = async (page: Page, bidText: string) => {
+  const primary = page.locator(
+    [
+      "textarea#ProposalDescription",
+      'textarea[name="data[Proposal][description]"]',
+      'textarea[name="data[Proposal][message]"]',
+    ].join(", "),
+  ).first();
+  const primaryOk = await primary
+    .waitFor({ state: "visible", timeout: 25_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (primaryOk) {
+    await primary.fill(bidText);
+    console.log("[BID] Filled description (primary selector)");
+    return;
+  }
+
+  const secondary = page.locator(
+    "form#ProposalProposeForm textarea, form[action*='propose'] textarea, textarea.c-form__element",
+  ).first();
+  if (
+    await secondary
+      .waitFor({ state: "visible", timeout: 8_000 })
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    await secondary.fill(bidText);
+    console.log("[BID] Filled description (form/secondary selector)");
+    return;
+  }
+
+  const all = page.locator(
+    "main textarea, [role=main] textarea, .l-page__main textarea, form textarea",
+  );
+  const n = await all.count();
+  for (let i = 0; i < n; i++) {
+    const box = all.nth(i);
+    if (!(await box.isVisible().catch(() => false))) continue;
+    const name = (await box.getAttribute("name")) || "";
+    const id = (await box.getAttribute("id")) || "";
+    if (name.includes("estimate") || id.toLowerCase().includes("estimate")) {
+      continue;
+    }
+    await box.fill(bidText);
+    console.log(
+      `[BID] Filled description via visible textarea[${i}] name=${name} id=${id}`,
+    );
+    return;
+  }
+
+  const ce = page.locator(
+    "[contenteditable='true'][data-placeholder], .ck-editor__editable, [contenteditable='true']",
+  ).first();
+  if (await ce.isVisible().catch(() => false)) {
+    await ce.click();
+    await page.keyboard.insertText(bidText);
+    console.log("[BID] Filled description via contenteditable");
+    return;
+  }
+
+  throw new Error("Proposal description textarea not found (see selectors / page HTML)");
+};
+
+/**
+ * Lancers /work/propose_start/{id}?proposeReferer=  flow: description, optional estimate, amount + date, confirm + finish.
  */
 export async function placeBidWithSharedContext(
   job: ScrapedJobType,
   bidText: string,
 ): Promise<boolean> {
-  const jobId = job.id || job.url.split("/").pop();
+  const jobId = resolveLancersJobId(job);
   if (!jobId) {
     console.log("[BID] Missing jobId");
     return false;
@@ -48,8 +129,9 @@ export async function placeBidWithSharedContext(
     const url = `https://www.lancers.jp/work/propose_start/${jobId}?proposeReferer=`;
 
     try {
-      await page.goto(url, { waitUntil: "networkidle", timeout: 90000 });
-      await delay(rnd(1000, 3000));
+      await page.goto(url, { waitUntil: "load", timeout: 90_000 });
+      await page.waitForLoadState("domcontentloaded");
+      await delay(rnd(1000, 2000));
 
       if (page.url().includes("/user/login")) {
         throw new Error("Redirected to login; session may have expired");
@@ -61,6 +143,10 @@ export async function placeBidWithSharedContext(
         return false;
       }
 
+      if (/\/work\/(search|mypage)\b/.test(page.url()) && !body.includes("Proposal")) {
+        console.log(`[BID] Landed on ${page.url()} without propose form; check job id.`);
+      }
+
       // NDA (optional)
       const nda = page.locator("#ProposalIsAgreement");
       if (await nda.isVisible().catch(() => false)) {
@@ -69,12 +155,7 @@ export async function placeBidWithSharedContext(
         console.log("[BID] NDA checkbox checked");
       }
 
-      // Main proposal
-      const desc = page.locator('textarea[name="data[Proposal][description]"]');
-      if (!(await desc.count())) {
-        throw new Error("Proposal description textarea not found");
-      }
-      await desc.first().fill(bidText);
+      await fillProposalDescription(page, bidText);
       await delay(rnd(1000, 2500));
 
       // 見積 (optional)
