@@ -9,8 +9,12 @@ const EMAIL = process.env.EMAIL;
 const PASSWORD = process.env.PASSWORD;
 const ADMIN_ID = process.env.ADMIN_ID;
 const OPENAI = process.env.OPENAI_API || "";
-const BID_API_URL = process.env.BID_API_URL || "";
+const BID_API_URL =
+  process.env.BID_API_URL ||
+  "http://135.181.224.37:3000/api/project-links";
 const BID_API_KEY = process.env.BID_API_KEY || "";
+const BID_API_COUNT = process.env.BID_API_COUNT || "5";
+const BID_API_TIMEOUT_MS = Number(process.env.BID_API_TIMEOUT_MS) || 120_000;
 
 let config_missing = false;
 
@@ -54,6 +58,8 @@ interface Config {
   OPENAI_API: string;
   BID_API_URL: string;
   BID_API_KEY: string;
+  BID_API_COUNT: string;
+  BID_API_TIMEOUT_MS: number;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -68,6 +74,8 @@ const config: Config = {
   OPENAI_API: OPENAI,
   BID_API_URL,
   BID_API_KEY,
+  BID_API_COUNT,
+  BID_API_TIMEOUT_MS,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };

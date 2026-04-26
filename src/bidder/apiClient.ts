@@ -3,25 +3,92 @@ import type { ScrapedJobType } from "@/types/job";
 import config from "@/config";
 import { fillPromptTemplate } from "./templates";
 
-export type BidApiPayload = {
-  jobId: string;
+/**
+ * Request body for `POST /api/project-links` (bid text generation).
+ */
+export type ProjectLinksRequest = {
+  category: string;
+  jobID: string;
+  description: string;
+  jobLink: string;
+  count: string;
   prompt: string;
-  job: {
-    title: string;
-    desc: string;
-    price: string;
-    url: string;
-    category?: string;
-    suggestions?: string;
-  };
 };
 
-const TIMEOUT_MS = 12000;
 const MIN_LEN = 50;
 const MAX_ATTEMPTS = 2;
 
+const pickString = (v: unknown): string | null =>
+  typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+
 /**
- * POST to external bid API. Returns null if disabled, empty, or too short.
+ * Tries to read generated bid text from various API response shapes.
+ */
+const extractBidTextFromResponse = (data: unknown): string => {
+  if (data == null) return "";
+
+  if (typeof data === "string") {
+    return data.trim();
+  }
+
+  if (typeof data !== "object") return "";
+
+  const o = data as Record<string, unknown>;
+
+  const direct =
+    pickString(o.text) ||
+    pickString(o.bid) ||
+    pickString(o.message) ||
+    pickString(o.content) ||
+    pickString(o.result) ||
+    pickString(o.proposal) ||
+    pickString(o.body) ||
+    pickString(o.output) ||
+    pickString(o.response);
+  if (direct) return direct;
+
+  const nested = o.data;
+  if (typeof nested === "string") return nested.trim();
+  if (nested && typeof nested === "object") {
+    const d = nested as Record<string, unknown>;
+    const n =
+      pickString(d.text) ||
+      pickString(d.bid) ||
+      pickString(d.content) ||
+      pickString(d.result);
+    if (n) return n;
+  }
+
+  if (Array.isArray(o.links)) {
+    const parts = o.links
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") {
+          const r = item as Record<string, unknown>;
+          return (
+            pickString(r.description) ||
+            pickString(r.text) ||
+            pickString(r.url) ||
+            ""
+          );
+        }
+        return "";
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("\n\n");
+  }
+
+  if (o.bid && typeof o.bid === "object") {
+    const b = o.bid as Record<string, unknown>;
+    const t = pickString(b.text) || pickString(b.content);
+    if (t) return t;
+  }
+
+  return "";
+};
+
+/**
+ * POST to bid generation API. Returns null if empty, too short, or all attempts fail.
  */
 export const generateBidFromAPI = async (
   job: ScrapedJobType,
@@ -32,27 +99,26 @@ export const generateBidFromAPI = async (
     return null;
   }
 
-  const payload: BidApiPayload = {
-    jobId: job.id || job.url.split("/").pop() || "",
+  const jobID = job.id || job.url.split("/").pop() || "";
+  const category = (job.category || "一般").replace(/\s+/g, " ").trim() || "一般";
+
+  const payload: ProjectLinksRequest = {
+    category,
+    jobID,
+    description: (job.desc || job.title || "").replace(/\s+/g, " ").trim(),
+    jobLink: job.url,
+    count: config.BID_API_COUNT,
     prompt: fillPromptTemplate(job),
-    job: {
-      title: job.title,
-      desc: job.desc,
-      price: job.price,
-      url: job.url,
-      category: job.category,
-      suggestions: job.suggestions,
-    },
   };
 
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       console.log(
-        `[API] POST ${url} (attempt ${attempt}/${MAX_ATTEMPTS}) jobId=${payload.jobId}`,
+        `[API] POST ${url} (attempt ${attempt}/${MAX_ATTEMPTS}) jobId=${jobID}`,
       );
-      const res = await axios.post(url, payload, {
-        timeout: TIMEOUT_MS,
+      const res = await axios.post<unknown>(url, payload, {
+        timeout: config.BID_API_TIMEOUT_MS,
         headers: {
           "content-type": "application/json",
           ...(config.BID_API_KEY
@@ -62,25 +128,28 @@ export const generateBidFromAPI = async (
         validateStatus: () => true,
       });
 
-      const data = res.data as
-        | string
-        | { text?: string; bid?: string; message?: string };
-      let text = "";
-      if (typeof data === "string") {
-        text = data;
-      } else if (data && typeof data === "object") {
-        text =
-          (data.text as string) ||
-          (data.bid as string) ||
-          (data.message as string) ||
-          "";
+      if (res.status < 200 || res.status >= 300) {
+        const preview =
+          typeof res.data === "string"
+            ? res.data.slice(0, 400)
+            : JSON.stringify(res.data).slice(0, 400);
+        console.log(
+          `[API] HTTP ${res.status} for jobId=${jobID}; body preview: ${preview}`,
+        );
+        if (attempt < MAX_ATTEMPTS) continue;
+        return null;
       }
 
-      text = (text || "").trim();
+      const text = extractBidTextFromResponse(res.data).trim();
       if (text.length < MIN_LEN) {
+        const raw =
+          typeof res.data === "string"
+            ? res.data.slice(0, 200)
+            : JSON.stringify(res.data).slice(0, 200);
         console.log(
-          `[API] Response too short (${text.length} chars); treating as null.`,
+          `[API] Response too short (${text.length} chars) or unparseable; raw≈ ${raw}`,
         );
+        if (attempt < MAX_ATTEMPTS) continue;
         return null;
       }
       return text;
