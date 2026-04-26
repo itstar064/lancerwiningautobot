@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { ScrapedJobType } from "@/types/job";
 import config from "@/config";
-import { fillPromptTemplate } from "./templates";
+import { fillBidTemplate, fillPromptTemplate } from "./templates";
 
 /**
  * Request body for `POST /api/project-links` (bid text generation).
@@ -88,18 +88,40 @@ const extractBidTextFromResponse = (data: unknown): string => {
 };
 
 /**
- * POST to bid generation API. Returns null if empty, too short, or all attempts fail.
+ * Resolves bid body: `BID_TEXT_SOURCE=template` uses `data/template.txt`;
+ * `api` calls the external bid API.
  */
 export const generateBidFromAPI = async (
   job: ScrapedJobType,
 ): Promise<string | null> => {
-  const url = config.BID_API_URL;
-  if (!url) {
-    console.log("[API] BID_API_URL not set; skip bid generation.");
-    return null;
+  const jobID = job.id || job.url.split("/").pop() || "";
+
+  if (config.BID_TEXT_SOURCE === "template") {
+    const text = fillBidTemplate({
+      id: job.id,
+      title: job.title,
+      desc: job.desc,
+      price: job.price,
+      url: job.url,
+      category: job.category,
+    }).trim();
+    console.log(
+      `[BID] Using data/template.txt (BID_TEXT_SOURCE=template) jobId=${jobID}`,
+    );
+    if (text.length < MIN_LEN) {
+      console.log(
+        `[BID] Template bid too short (${text.length} chars); min ${MIN_LEN}.`,
+      );
+      return null;
+    }
+    return text;
   }
 
-  const jobID = job.id || job.url.split("/").pop() || "";
+  const url = config.BID_API_URL;
+  if (!url) {
+    console.log("[API] BID_TEXT_SOURCE=api but BID_API_URL not set; skip.");
+    return null;
+  }
   const category = (job.category || "一般").replace(/\s+/g, " ").trim() || "一般";
 
   const payload: ProjectLinksRequest = {

@@ -15,6 +15,8 @@ const BID_API_URL =
 const BID_API_KEY = process.env.BID_API_KEY || "";
 const BID_API_COUNT = process.env.BID_API_COUNT || "5";
 const BID_API_TIMEOUT_MS = Number(process.env.BID_API_TIMEOUT_MS) || 120_000;
+const _bidSrc = (process.env.BID_TEXT_SOURCE || "template").toLowerCase();
+const BID_TEXT_SOURCE: "api" | "template" = _bidSrc === "api" ? "api" : "template";
 
 let config_missing = false;
 
@@ -60,6 +62,8 @@ interface Config {
   BID_API_KEY: string;
   BID_API_COUNT: string;
   BID_API_TIMEOUT_MS: number;
+  /** Use external API vs local `data/template.txt` for proposal body. */
+  BID_TEXT_SOURCE: "api" | "template";
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -76,6 +80,7 @@ const config: Config = {
   BID_API_KEY,
   BID_API_COUNT,
   BID_API_TIMEOUT_MS,
+  BID_TEXT_SOURCE,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };

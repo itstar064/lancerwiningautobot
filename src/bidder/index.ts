@@ -11,4 +11,6 @@ export {
   getEstimateTemplate,
   getPromptTemplate,
   fillPromptTemplate,
+  getBidTextTemplate,
+  fillBidTemplate,
 } from "./templates";
