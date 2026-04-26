@@ -1,12 +1,13 @@
 import { readFileSync } from "fs";
-import path from "path";
+import { join } from "path";
 
 /**
  * `data/*` is next to project root, not `process.cwd()` (which breaks when
  * running from `dist/`, PM2, or another directory).
+ * Use `import { join }` — `import path from "path"` can be undefined under some ts-node settings.
  */
-const DATA_DIR = path.join(__dirname, "..", "..", "data");
-const dataPath = (...parts: string[]) => path.join(DATA_DIR, ...parts);
+const DATA_DIR = join(__dirname, "..", "..", "data");
+const dataPath = (...parts: string[]) => join(DATA_DIR, ...parts);
 
 let estimateCache: string | null = null;
 let promptTemplateCache: string | null = null;
