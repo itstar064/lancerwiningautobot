@@ -48,6 +48,65 @@ const resolveLancersJobId = (job: ScrapedJobType): string | null => {
   return fromAny ? fromAny[1] : null;
 };
 
+/** Lancers can hide validation errors while disabling submit; long API text also trips limits. */
+const BID_PROPOSAL_MAX_LENGTH = 5000;
+const PROPOSE_FORM_ACTION_TIMEOUT_MS = 45_000;
+const PROPOSE_NAV_TIMEOUT_MS = 90_000;
+
+const truncateBidIfNeeded = (text: string): string => {
+  if (text.length <= BID_PROPOSAL_MAX_LENGTH) return text;
+  const t = text.slice(0, BID_PROPOSAL_MAX_LENGTH - 30) + "\n\n(以降省略しました)";
+  console.log(
+    `[BID] Truncated proposal to ${BID_PROPOSAL_MAX_LENGTH} chars (Lancers limit / validation)`,
+  );
+  return t;
+};
+
+/**
+ * 内容を確認 / 最終提案: Lancers may use <button> with text, not input[value=...].
+ */
+const findPrimarySubmit = (
+  page: Page,
+  kind: "confirm" | "finish",
+) => {
+  if (kind === "confirm") {
+    return page
+      .getByRole("button", { name: /内容を確認/ })
+      .or(page.locator('input[type="submit"][value="内容を確認する"]'))
+      .or(
+        page.locator(
+          'button[type="submit"]',
+          { hasText: "内容を確認" },
+        ),
+      );
+  }
+  return page
+    .getByRole("button", { name: /利用規約に同意/ })
+    .or(
+      page.locator(
+        'input[type="submit"][value="利用規約に同意して提案する"]',
+      ),
+    )
+    .or(
+      page.locator("button[type=submit]", {
+        hasText: "利用規約に同意",
+      }),
+    );
+};
+
+const scrollProposeFormFooter = async (page: Page) => {
+  await page
+    .evaluate(() => {
+      const form = document.getElementById("ProposalProposeForm");
+      if (form) {
+        form.scrollIntoView({ block: "end" });
+      }
+      window.scrollTo(0, document.body.scrollHeight);
+    })
+    .catch(() => undefined);
+  await delay(300);
+};
+
 /**
  * 提案文欄: DOM differs (id vs name, lazy paint). Primary OR-wait, then fallbacks.
  */
@@ -169,6 +228,8 @@ export async function placeBidWithSharedContext(
     const page = await context.newPage();
 
     try {
+      const safeBid = truncateBidIfNeeded(bidText);
+
       await gotoProposeFormViaDetailPage(page, jobId);
 
       if (page.url().includes("/user/login")) {
@@ -183,7 +244,7 @@ export async function placeBidWithSharedContext(
         console.log("[BID] NDA checkbox checked");
       }
 
-      await fillProposalDescription(page, bidText);
+      await fillProposalDescription(page, safeBid);
         await delay(bidPause());
 
       // 見積 (optional)
@@ -214,22 +275,35 @@ export async function placeBidWithSharedContext(
         console.log(`[BID] Set completion date: ${dateStr}`);
       }
 
-      // Step 1: 内容を確認する
-      const toConfirm = page.locator(
-        'input#form_end[type="submit"][value="内容を確認する"]',
-      );
-      await toConfirm.waitFor({ state: "visible", timeout: 25000 });
+      // Step 1: 内容を確認 (button or input; footer may be off-screen)
+      await scrollProposeFormFooter(page);
+      const toConfirm = findPrimarySubmit(page, "confirm").first();
+      await toConfirm.waitFor({ state: "visible", timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS });
+      await toConfirm.scrollIntoViewIfNeeded();
       await delay(bidPause());
+      if (
+        (await toConfirm.getAttribute("disabled")) !== null ||
+        (await toConfirm.isDisabled().catch(() => false))
+      ) {
+        const errText = await page
+          .locator(".c-form__error, .c-text--error, [class*='error']")
+          .first()
+          .textContent()
+          .catch(() => null);
+        throw new Error(
+          `内容を確認 is disabled. Check required fields. Page hint: ${errText || "(no error node)"}`,
+        );
+      }
       await Promise.all([
-        page.waitForURL(/propose_confirm/, { timeout: 60000 }),
+        page.waitForURL(/propose_confirm/, { timeout: PROPOSE_NAV_TIMEOUT_MS }),
         toConfirm.click(),
       ]);
 
       // Step 2: 利用規約に同意して提案する
-      const finish = page.locator(
-        'input#form_end[type="submit"][value="利用規約に同意して提案する"]',
-      );
-      await finish.waitFor({ state: "visible", timeout: 30000 });
+      await scrollProposeFormFooter(page);
+      const finish = findPrimarySubmit(page, "finish").first();
+      await finish.waitFor({ state: "visible", timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS });
+      await finish.scrollIntoViewIfNeeded();
       await delay(bidPause());
       await finish.click();
       await page

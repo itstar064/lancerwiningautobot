@@ -22,7 +22,28 @@ const pickString = (v: unknown): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 
 /**
- * Tries to read generated bid text from various API response shapes.
+ * POST /api/project-links style:
+ * `{ bids: "…", links: [ … ], jobId, … }` — the proposal body is `bids` (plural).
+ */
+export type ProjectLinksResponse = {
+  jobId?: string;
+  jobLink?: string;
+  category?: string;
+  description?: string;
+  requestedCount?: number;
+  returnedCount?: number;
+  links?: string[];
+  sourceSummary?: { fromDb?: number; generated?: number };
+  /** Main proposal text (日本語) */
+  bids?: string;
+  text?: string;
+  bid?: string;
+  message?: string;
+  [k: string]: unknown;
+};
+
+/**
+ * Reads generated bid text from API JSON. Prefers `bids` (project-links service).
  */
 const extractBidTextFromResponse = (data: unknown): string => {
   if (data == null) return "";
@@ -36,6 +57,7 @@ const extractBidTextFromResponse = (data: unknown): string => {
   const o = data as Record<string, unknown>;
 
   const direct =
+    pickString(o.bids) ||
     pickString(o.text) ||
     pickString(o.bid) ||
     pickString(o.message) ||
@@ -52,6 +74,7 @@ const extractBidTextFromResponse = (data: unknown): string => {
   if (nested && typeof nested === "object") {
     const d = nested as Record<string, unknown>;
     const n =
+      pickString(d.bids) ||
       pickString(d.text) ||
       pickString(d.bid) ||
       pickString(d.content) ||

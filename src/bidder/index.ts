@@ -1,5 +1,5 @@
 export { generateBidFromAPI } from "./apiClient";
-export type { ProjectLinksRequest } from "./apiClient";
+export type { ProjectLinksRequest, ProjectLinksResponse } from "./apiClient";
 export { shouldBid, parseProposalCount } from "./filters";
 export { canPlaceBidThisHour, recordBidPlaced } from "./rateLimit";
 export {
