@@ -4,7 +4,7 @@ import { ScrapedJobType } from "./types/job";
 import { delay } from "./utils";
 import config from "@/config";
 import {
-  shouldBid,
+  getBidSkipReason,
   generateBidFromAPI,
   canPlaceBidThisHour,
   recordBidPlaced,
@@ -74,9 +74,16 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
     if (inserted) {
       console.log(`[SCRAPER] New job: ${jobid} — ${job.title}`);
 
-      if (!jobPassesPopupPriceFilter(job, config.JOB_NOTIFY_PRICE)) {
+      if (
+        !jobPassesPopupPriceFilter(
+          job,
+          config.JOB_NOTIFY_PRICE,
+          config.BID_MIN_BUDGET_JPY,
+          config.BID_MAX_BUDGET_JPY,
+        )
+      ) {
         console.log(
-          `[NOTIFY] Skip popup (JOB_NOTIFY_PRICE=${config.JOB_NOTIFY_PRICE} — set=0~200000円の掲示予算のみ); jobId=${jobid}`,
+          `[NOTIFY] Skip popup (JOB_NOTIFY_PRICE=${config.JOB_NOTIFY_PRICE}, budget_range=${config.BID_MIN_BUDGET_JPY}-${config.BID_MAX_BUDGET_JPY} jpy); jobId=${jobid}`,
         );
       } else {
         const maxLen = job.employerAvatar
@@ -135,9 +142,14 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
 
         await sendMessage(userid, message, job.employerAvatar);
 
-        if (!shouldBid(job)) {
+        const bidSkipReason = getBidSkipReason(
+          job,
+          config.BID_MIN_BUDGET_JPY,
+          config.BID_MAX_BUDGET_JPY,
+        );
+        if (bidSkipReason) {
           console.log(
-            `[BID] Skipped: filters (price empty, proposals>=30, or desc<=50) jobId=${jobid}`,
+            `[BID] Skipped: ${bidSkipReason} (range ${config.BID_MIN_BUDGET_JPY}-${config.BID_MAX_BUDGET_JPY} jpy) jobId=${jobid}`,
           );
         } else if (!canPlaceBidThisHour()) {
           console.log(

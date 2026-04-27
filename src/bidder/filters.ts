@@ -1,10 +1,7 @@
 import type { ScrapedJobType } from "@/types/job";
 
-/** New-job popup / bid path filter from `JOB_NOTIFY_PRICE`: any | set (0–200,000 円範囲). */
+/** New-job Telegram gate: `any` = notify every new job; `set` = notify only if listing budget fits [min,max]. */
 export type JobNotifyPriceMode = "any" | "set";
-
-/** Upper bound of listing budget (JPY) we treat as 0~200,000 円案件 (matches `shouldBid` cap). */
-export const BID_MAX_BUDGET_JPY = 200_000;
 
 /** True if listing scraped a non-empty 報酬 line (non-whitespace). */
 export const listingPriceIsSet = (job: ScrapedJobType): boolean => {
@@ -12,19 +9,28 @@ export const listingPriceIsSet = (job: ScrapedJobType): boolean => {
   return p.length > 0;
 };
 
-/** Whether a new job should trigger Telegram + bid flow for the given mode. */
+/**
+ * Listing budget (high end from card text) within [minJpy, maxJpy] inclusive.
+ * Uses `getMaxListingBudgetJPY`; unparseable → false.
+ */
+export const listingBudgetWithinRange = (
+  job: ScrapedJobType,
+  minJpy: number,
+  maxJpy: number,
+): boolean => getBidSkipReason(job, minJpy, maxJpy) === null;
+
+/** Whether a new job should trigger Telegram (and then bid attempt). */
 export const jobPassesPopupPriceFilter = (
   job: ScrapedJobType,
   mode: JobNotifyPriceMode,
+  minJpy: number,
+  maxJpy: number,
 ): boolean => {
   if (mode === "any") return true;
-  // set: 予算が掲示されていて 最大が 0〜BID_MAX_BUDGET_JPY（例: 20万円 = 20万 まで）
-  const maxBudget = getMaxListingBudgetJPY(job.price);
-  if (maxBudget === null) return false;
-  return maxBudget >= 0 && maxBudget <= BID_MAX_BUDGET_JPY;
+  return listingBudgetWithinRange(job, minJpy, maxJpy);
 };
 
-/** `JOB_NOTIFY_PRICE`: `any` = all new jobs, `set` = only 0~200,000 円相当の表示予算. Aliases: budget. */
+/** `JOB_NOTIFY_PRICE`: `any` | `set` (aliases: budget, required, yes, 1, true). */
 export const parseJobNotifyPriceMode = (raw: string | undefined): JobNotifyPriceMode => {
   const v = (raw || "any").toLowerCase().trim();
   if (
@@ -39,6 +45,7 @@ export const parseJobNotifyPriceMode = (raw: string | undefined): JobNotifyPrice
   }
   return "any";
 };
+
 /** Parse first integer from strings like "12名が応募" or "5" */
 export const parseProposalCount = (s: string): number => {
   const m = (s || "").match(/(\d+)/);
@@ -87,23 +94,30 @@ export const getMaxListingBudgetJPY = (priceText: string): number | null => {
 };
 
 /**
- * Only bid when listing looks eligible: has a price line, not too many competitors, enough description.
+ * Reason auto-bid is skipped, or `null` if listing max budget is in [minJpy, maxJpy].
+ * Compares parsed listing **high-end** budget to env `BID_MIN_BUDGET_JPY` / `BID_MAX_BUDGET_JPY`.
  */
-export const shouldBid = (job: ScrapedJobType): boolean => {
-  if (!job.price || job.price.replace(/\s/g, "").length === 0) {
-    return false;
+export const getBidSkipReason = (
+  job: ScrapedJobType,
+  minJpy: number,
+  maxJpy: number,
+): string | null => {
+  const maxVal = getMaxListingBudgetJPY(job.price);
+  if (maxVal === null) {
+    return `budget_unparseable(cannot_verify_range_${minJpy}_${maxJpy}_jpy)`;
   }
-  const proposals = parseProposalCount(job.suggestions);
-  if (proposals >= 30) {
-    return false;
+  if (maxVal < minJpy) {
+    return `budget_below_min(listing_max_jpy=${maxVal}, min=${minJpy})`;
   }
-  const maxBudget = getMaxListingBudgetJPY(job.price);
-  if (maxBudget === null || maxBudget > BID_MAX_BUDGET_JPY) {
-    return false;
+  if (maxVal > maxJpy) {
+    return `budget_over_max(listing_max_jpy=${maxVal}, max=${maxJpy})`;
   }
-  const desc = (job.desc || "").replace(/\s+/g, " ").trim();
-  if (desc.length <= 50) {
-    return false;
-  }
-  return true;
+  return null;
 };
+
+/** True if auto-bid allowed for this listing under the configured [min, max] JPY window. */
+export const shouldBid = (
+  job: ScrapedJobType,
+  minJpy: number,
+  maxJpy: number,
+): boolean => getBidSkipReason(job, minJpy, maxJpy) === null;

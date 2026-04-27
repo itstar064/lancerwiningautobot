@@ -4,11 +4,12 @@ export { reportBidCompleted } from "./bidRecord";
 export type { BidRecordPayload } from "./bidRecord";
 export {
   shouldBid,
+  getBidSkipReason,
+  listingBudgetWithinRange,
   parseProposalCount,
   listingPriceIsSet,
   jobPassesPopupPriceFilter,
   parseJobNotifyPriceMode,
-  BID_MAX_BUDGET_JPY,
   getMaxListingBudgetJPY,
 } from "./filters";
 export type { JobNotifyPriceMode } from "./filters";
@@ -17,6 +18,9 @@ export {
   placeBidWithSharedContext,
   pickMilestoneAmountJPY,
   getCompletionDateJapanese,
+  computeCompletionDateJapanese,
+  formatDateJapanese,
+  parseJapaneseLancersDate,
 } from "./placeBidPlaywright";
 export {
   getEstimateTemplate,

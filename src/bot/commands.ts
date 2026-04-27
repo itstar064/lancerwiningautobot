@@ -110,10 +110,18 @@ const setup_commands = async (bot: Telegraf) => {
 
         const job = snapshotToJob(clickedChatId, raw);
 
-        if (!shouldBid(job)) {
-          await ctx.answerCbQuery("Job does not pass bid filters.");
+        if (
+          !shouldBid(
+            job,
+            config.BID_MIN_BUDGET_JPY,
+            config.BID_MAX_BUDGET_JPY,
+          )
+        ) {
+          await ctx.answerCbQuery(
+            `Budget outside ${config.BID_MIN_BUDGET_JPY}–${config.BID_MAX_BUDGET_JPY} JPY (parsed from listing).`,
+          );
           console.log(
-            `[BID] Skipped (manual): filters jobId=${clickedChatId}`,
+            `[BID] Skipped (manual): budget range jobId=${clickedChatId}`,
           );
           placingBid = false;
           return;

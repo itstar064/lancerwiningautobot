@@ -4,12 +4,134 @@ import { delay } from "@/utils";
 import type { ScrapedJobType } from "@/types/job";
 import type { Page } from "playwright";
 import config from "@/config";
+import { getMaxListingBudgetJPY } from "./filters";
 
 const rnd = (a: number, b: number) =>
   a + Math.floor(Math.random() * (b - a + 1));
 
-const bidPause = () =>
-  rnd(config.BID_BROWSER_DELAY_MIN_MS, config.BID_BROWSER_DELAY_MAX_MS);
+const bidPause = () => {
+  if (config.BID_BROWSER_DELAY_MAX_MS <= 0) {
+    return 0;
+  }
+  return rnd(config.BID_BROWSER_DELAY_MIN_MS, config.BID_BROWSER_DELAY_MAX_MS);
+};
+
+const maybeDelayBidPause = async () => {
+  const ms = bidPause();
+  if (ms > 0) await delay(ms);
+};
+
+/** `YYYY年MM月DD日` (optional time after day ignored). */
+export const formatDateJapanese = (d: Date): string => {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}年${mo}月${day}日`;
+};
+
+/** Parse Lancers-style date from detail / schedule text. */
+export const parseJapaneseLancersDate = (raw: string): Date | null => {
+  const s = raw.replace(/\s+/g, " ").trim();
+  const m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const day = parseInt(m[3], 10);
+  const dt = new Date(y, mo, day, 12, 0, 0, 0);
+  if (
+    dt.getFullYear() !== y ||
+    dt.getMonth() !== mo ||
+    dt.getDate() !== day
+  ) {
+    return null;
+  }
+  return dt;
+};
+
+const addDays = (base: Date, n: number): Date => {
+  const out = new Date(base.getTime());
+  out.setHours(12, 0, 0, 0);
+  out.setDate(out.getDate() + n);
+  return out;
+};
+
+/** 依頼詳細: `.p-work-detail-schedule__item` with 希望納期, or definition list fallback. */
+const extractClientPreferredDeliveryDateFromPage = async (
+  page: Page,
+): Promise<Date | null> => {
+  const items = page.locator(".p-work-detail-schedule__item");
+  const count = await items.count();
+  for (let i = 0; i < count; i++) {
+    const item = items.nth(i);
+    const title =
+      (await item
+        .locator(".p-work-detail-schedule__item__title")
+        .textContent()
+        .catch(() => null)) || "";
+    if (!title.includes("希望納期")) continue;
+    const text =
+      (await item
+        .locator(".p-work-detail-schedule__text")
+        .first()
+        .textContent()
+        .catch(() => null)) || "";
+    const d = parseJapaneseLancersDate(text);
+    if (d) return d;
+  }
+
+  const dd = page
+    .locator(
+      "dt.c-definition-list__term, dt.p-work-detail-lancer__postscript-term",
+    )
+    .filter({ hasText: /希望納期/ })
+    .locator("xpath=./following-sibling::dd[1]");
+  if ((await dd.count()) > 0) {
+    const text = (await dd.first().innerText().catch(() => "")) || "";
+    const firstLine = text.split("\n")[0]?.trim() || text;
+    const d = parseJapaneseLancersDate(firstLine);
+    if (d) return d;
+  }
+  return null;
+};
+
+/**
+ * 完了予定日 for propose form:
+ * - If client 希望納期 on detail page: that date + random 1–10 days.
+ * - Else by listing budget high-end: &lt;100k → 3–10d; 100k–300k → 10–30d; &gt;300k → 30–60d from today.
+ * - If budget unparseable and no client date: `BID_COMPLETION_DAYS` from env.
+ */
+export const computeCompletionDateJapanese = (
+  job: ScrapedJobType,
+  clientPreferred: Date | null,
+): string => {
+  if (clientPreferred) {
+    const plus = rnd(1, 10);
+    const d = addDays(clientPreferred, plus);
+    console.log(
+      `[BID] 完了予定日: 希望納期+${plus}日 → ${formatDateJapanese(d)}`,
+    );
+    return formatDateJapanese(d);
+  }
+
+  const maxB = getMaxListingBudgetJPY(job.price);
+  let days: number;
+  if (maxB === null) {
+    days = Math.max(1, config.BID_COMPLETION_DAYS);
+    console.log(
+      `[BID] 完了予定日: no希望納期 & budget unparseable → fallback ${days}d (BID_COMPLETION_DAYS)`,
+    );
+  } else if (maxB < 100_000) {
+    days = rnd(3, 10);
+    console.log(`[BID] 完了予定日: budget<100k → today+${days}d`);
+  } else if (maxB <= 300_000) {
+    days = rnd(10, 30);
+    console.log(`[BID] 完了予定日: 100k–300k → today+${days}d`);
+  } else {
+    days = rnd(30, 60);
+    console.log(`[BID] 完了予定日: budget>300k → today+${days}d (~1–2mo)`);
+  }
+  return formatDateJapanese(addDays(new Date(), days));
+};
 
 /** Next milestone amount (JPY) from scraped price; step 1000, min 1000. */
 export const pickMilestoneAmountJPY = (
@@ -24,15 +146,10 @@ export const pickMilestoneAmountJPY = (
   return Math.max(1000, stepped);
 };
 
-/** 完了予定日: `daysFromToday` from now (local). Env: `BID_COMPLETION_DAYS`. */
+/** Legacy: fixed offset from today (env `BID_COMPLETION_DAYS`). */
 export const getCompletionDateJapanese = (daysFromToday?: number): string => {
   const days = daysFromToday ?? config.BID_COMPLETION_DAYS;
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}年${mo}月${day}日`;
+  return formatDateJapanese(addDays(new Date(), Math.max(1, days)));
 };
 
 /** Prefer numeric id from /work/detail/12345, then job.id, then last path segment. */
@@ -51,7 +168,7 @@ const resolveLancersJobId = (job: ScrapedJobType): string | null => {
 /** Lancers can hide validation errors while disabling submit; long API text also trips limits. */
 const BID_PROPOSAL_MAX_LENGTH = 5000;
 const PROPOSE_FORM_ACTION_TIMEOUT_MS = 45_000;
-const PROPOSE_NAV_TIMEOUT_MS = 90_000;
+const PROPOSE_NAV_TIMEOUT_MS = 60_000;
 
 const truncateBidIfNeeded = (text: string): string => {
   if (text.length <= BID_PROPOSAL_MAX_LENGTH) return text;
@@ -104,7 +221,9 @@ const scrollProposeFormFooter = async (page: Page) => {
       window.scrollTo(0, document.body.scrollHeight);
     })
     .catch(() => undefined);
-  await delay(300);
+  if (config.BID_BROWSER_DELAY_MAX_MS > 0) {
+    await delay(100);
+  }
 };
 
 /**
@@ -119,7 +238,7 @@ const fillProposalDescription = async (page: Page, bidText: string) => {
     ].join(", "),
   ).first();
   const primaryOk = await primary
-    .waitFor({ state: "visible", timeout: 25_000 })
+    .waitFor({ state: "visible", timeout: 18_000 })
     .then(() => true)
     .catch(() => false);
   if (primaryOk) {
@@ -133,7 +252,7 @@ const fillProposalDescription = async (page: Page, bidText: string) => {
   ).first();
   if (
     await secondary
-      .waitFor({ state: "visible", timeout: 8_000 })
+      .waitFor({ state: "visible", timeout: 6_000 })
       .then(() => true)
       .catch(() => false)
   ) {
@@ -175,15 +294,19 @@ const fillProposalDescription = async (page: Page, bidText: string) => {
 };
 
 /**
- * Lancers: direct `/work/propose_start/{id}` can redirect to detail or a shell without
- * the real form. Open `/work/detail/{id}` and use the same `提案する` link as the site.
+ * Open detail → read 希望納期 → click 提案する. Does not wait for full `load` / `networkidle`.
  */
-const gotoProposeFormViaDetailPage = async (page: Page, jobId: string) => {
+const gotoProposeFormViaDetailPage = async (
+  page: Page,
+  jobId: string,
+): Promise<Date | null> => {
   const detailUrl = `https://www.lancers.jp/work/detail/${jobId}`;
   console.log(`[BID] Open work detail: ${detailUrl}`);
-  await page.goto(detailUrl, { waitUntil: "load", timeout: 90_000 });
-  await page.waitForLoadState("domcontentloaded");
-  await delay(bidPause());
+  await page.goto(detailUrl, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  await maybeDelayBidPause();
 
   if (page.url().includes("/user/login")) {
     throw new Error("Redirected to login; session may have expired");
@@ -194,20 +317,26 @@ const gotoProposeFormViaDetailPage = async (page: Page, jobId: string) => {
     throw new Error("ALREADY_APPLIED");
   }
 
+  const clientPref = await extractClientPreferredDeliveryDateFromPage(page);
+  if (clientPref) {
+    console.log(`[BID] Parsed client 希望納期: ${formatDateJapanese(clientPref)}`);
+  }
+
   const proposeLink = page
     .locator('a.p-work-detail__righter-button[href*="/work/propose_start/"]')
     .first();
-  await proposeLink.waitFor({ state: "visible", timeout: 25_000 });
+  await proposeLink.waitFor({ state: "visible", timeout: 20_000 });
   const href = await proposeLink.getAttribute("href");
   console.log(`[BID] Click 提案する → ${href || ""}`);
   await proposeLink.scrollIntoViewIfNeeded();
-  await delay(bidPause());
+  await maybeDelayBidPause();
   await Promise.all([
-    page.waitForURL(/\/work\/propose_start\//, { timeout: 60_000 }),
+    page.waitForURL(/\/work\/propose_start\//, { timeout: PROPOSE_NAV_TIMEOUT_MS }),
     proposeLink.click(),
   ]);
-  await page.waitForLoadState("load");
-  await delay(bidPause());
+  await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
+  await maybeDelayBidPause();
+  return clientPref;
 };
 
 /**
@@ -230,7 +359,7 @@ export async function placeBidWithSharedContext(
     try {
       const safeBid = truncateBidIfNeeded(bidText);
 
-      await gotoProposeFormViaDetailPage(page, jobId);
+      const clientPreferred = await gotoProposeFormViaDetailPage(page, jobId);
 
       if (page.url().includes("/user/login")) {
         throw new Error("Redirected to login; session may have expired");
@@ -240,18 +369,18 @@ export async function placeBidWithSharedContext(
       const nda = page.locator("#ProposalIsAgreement");
       if (await nda.isVisible().catch(() => false)) {
         await nda.check({ force: true });
-        await delay(bidPause());
+        await maybeDelayBidPause();
         console.log("[BID] NDA checkbox checked");
       }
 
       await fillProposalDescription(page, safeBid);
-        await delay(bidPause());
+      await maybeDelayBidPause();
 
       // 見積 (optional)
       const est = page.locator('textarea[name="data[Proposal][estimate]"]');
       if (await est.count()) {
         await est.first().fill(getEstimateTemplate());
-        await delay(bidPause());
+        await maybeDelayBidPause();
         console.log("[BID] Filled data[Proposal][estimate]");
       }
 
@@ -260,27 +389,30 @@ export async function placeBidWithSharedContext(
       const numIn = page.locator('input[type="number"][step="1000"]').first();
       if (await numIn.isVisible().catch(() => false)) {
         await numIn.fill(String(amount));
-        await delay(bidPause());
+        await maybeDelayBidPause();
       }
 
       // 完了予定日 (react-datepicker text input)
-      const dateStr = getCompletionDateJapanese();
+      const dateStr = computeCompletionDateJapanese(job, clientPreferred);
       const dateInput = page
         .locator(".react-datepicker__input-container input")
         .first();
       if (await dateInput.isVisible().catch(() => false)) {
         await dateInput.fill(dateStr);
         await page.keyboard.press("Tab");
-        await delay(bidPause());
+        await maybeDelayBidPause();
         console.log(`[BID] Set completion date: ${dateStr}`);
       }
 
       // Step 1: 内容を確認 (button or input; footer may be off-screen)
       await scrollProposeFormFooter(page);
       const toConfirm = findPrimarySubmit(page, "confirm").first();
-      await toConfirm.waitFor({ state: "visible", timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS });
+      await toConfirm.waitFor({
+        state: "visible",
+        timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
+      });
       await toConfirm.scrollIntoViewIfNeeded();
-      await delay(bidPause());
+      await maybeDelayBidPause();
       if (
         (await toConfirm.getAttribute("disabled")) !== null ||
         (await toConfirm.isDisabled().catch(() => false))
@@ -302,13 +434,17 @@ export async function placeBidWithSharedContext(
       // Step 2: 利用規約に同意して提案する
       await scrollProposeFormFooter(page);
       const finish = findPrimarySubmit(page, "finish").first();
-      await finish.waitFor({ state: "visible", timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS });
+      await finish.waitFor({
+        state: "visible",
+        timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
+      });
       await finish.scrollIntoViewIfNeeded();
-      await delay(bidPause());
+      await maybeDelayBidPause();
       await finish.click();
-      await page
-        .waitForLoadState("networkidle", { timeout: 60000 })
-        .catch(() => undefined);
+      await Promise.race([
+        page.waitForURL(/propose_finish|mypage/, { timeout: 25_000 }),
+        page.waitForLoadState("domcontentloaded", { timeout: 12_000 }),
+      ]).catch(() => undefined);
 
       const endUrl = page.url();
       if (endUrl.includes("propose_finish") || endUrl.includes("mypage")) {

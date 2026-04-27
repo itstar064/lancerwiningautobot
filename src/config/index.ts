@@ -56,10 +56,22 @@ const BID_RECORD_URL =
 const LANCERS_ACCOUNT_ID = (process.env.LANCERS_ACCOUNT_ID || "").trim();
 const LANCERS_ACCOUNT_URL = (process.env.LANCERS_ACCOUNT_URL || "").trim();
 
-/** New job Telegram + bid: `any` = all, `set` = only 0~200,000 円相当の掲示予算 (any | set, alias set: budget). */
+/** New job Telegram: `any` = all listings; `set` = only jobs whose parsed budget fits [min,max]. */
 const JOB_NOTIFY_PRICE: JobNotifyPriceMode = parseJobNotifyPriceMode(
   process.env.JOB_NOTIFY_PRICE,
 );
+
+const _bidMin = Number(process.env.BID_MIN_BUDGET_JPY);
+const _bidMax = Number(process.env.BID_MAX_BUDGET_JPY);
+let BID_MIN_BUDGET_JPY =
+  Number.isFinite(_bidMin) && _bidMin >= 0 ? Math.floor(_bidMin) : 0;
+let BID_MAX_BUDGET_JPY = Number.isFinite(_bidMax) && _bidMax >= 0 ? Math.floor(_bidMax) : 200_000;
+if (BID_MAX_BUDGET_JPY < BID_MIN_BUDGET_JPY) {
+  console.warn(
+    "[CONFIG] BID_MAX_BUDGET_JPY < BID_MIN_BUDGET_JPY; clamping max to min.",
+  );
+  BID_MAX_BUDGET_JPY = BID_MIN_BUDGET_JPY;
+}
 
 let config_missing = false;
 
@@ -118,8 +130,10 @@ interface Config {
   BID_RECORD_URL: string;
   LANCERS_ACCOUNT_ID: string;
   LANCERS_ACCOUNT_URL: string;
-  /** Filter new-job Telegram + bid path by listing 報酬 line present or not. */
   JOB_NOTIFY_PRICE: JobNotifyPriceMode;
+  /** Parsed listing budget high-end must be in [min, max] (yen) to auto-bid. */
+  BID_MIN_BUDGET_JPY: number;
+  BID_MAX_BUDGET_JPY: number;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -148,6 +162,8 @@ const config: Config = {
   LANCERS_ACCOUNT_ID,
   LANCERS_ACCOUNT_URL,
   JOB_NOTIFY_PRICE,
+  BID_MIN_BUDGET_JPY,
+  BID_MAX_BUDGET_JPY,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };
