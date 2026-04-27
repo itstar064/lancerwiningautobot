@@ -96,7 +96,7 @@ const extractClientPreferredDeliveryDateFromPage = async (
 
 /**
  * 完了予定日 for propose form:
- * - If client 希望納期 on detail page: that date + random 1–10 days.
+ * - If client 希望納期 on detail page: that date minus random 1–10 days (earlier than 希望納期); not before today.
  * - Else by listing budget high-end: &lt;100k → 3–10d; 100k–300k → 10–30d; &gt;300k → 30–60d from today.
  * - If budget unparseable and no client date: `BID_COMPLETION_DAYS` from env.
  */
@@ -105,11 +105,21 @@ export const computeCompletionDateJapanese = (
   clientPreferred: Date | null,
 ): string => {
   if (clientPreferred) {
-    const plus = rnd(1, 10);
-    const d = addDays(clientPreferred, plus);
-    console.log(
-      `[BID] 完了予定日: 希望納期+${plus}日 → ${formatDateJapanese(d)}`,
-    );
+    const earlierBy = rnd(1, 10);
+    let d = addDays(clientPreferred, -earlierBy);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const dStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (dStart < todayStart) {
+      d = addDays(new Date(), 0);
+      console.log(
+        `[BID] 完了予定日: 希望納期より${earlierBy}日前は本日より前のため本日に丸め → ${formatDateJapanese(d)}`,
+      );
+    } else {
+      console.log(
+        `[BID] 完了予定日: 希望納期より${earlierBy}日前 → ${formatDateJapanese(d)}`,
+      );
+    }
     return formatDateJapanese(d);
   }
 
@@ -328,11 +338,14 @@ const gotoProposeFormViaDetailPage = async (
   await proposeLink.waitFor({ state: "visible", timeout: 20_000 });
   const href = await proposeLink.getAttribute("href");
   console.log(`[BID] Click 提案する → ${href || ""}`);
-  await proposeLink.scrollIntoViewIfNeeded();
+  // Sticky header (.js-lancers-header) often intercepts clicks if button is flush to top; center in viewport.
+  await proposeLink.evaluate((el: HTMLElement) =>
+    el.scrollIntoView({ block: "center", inline: "nearest" }),
+  );
   await maybeDelayBidPause();
   await Promise.all([
     page.waitForURL(/\/work\/propose_start\//, { timeout: PROPOSE_NAV_TIMEOUT_MS }),
-    proposeLink.click(),
+    proposeLink.click({ force: true, timeout: 45_000 }),
   ]);
   await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
   await maybeDelayBidPause();
@@ -411,7 +424,9 @@ export async function placeBidWithSharedContext(
         state: "visible",
         timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
       });
-      await toConfirm.scrollIntoViewIfNeeded();
+      await toConfirm.evaluate((el: HTMLElement) =>
+        el.scrollIntoView({ block: "center", inline: "nearest" }),
+      );
       await maybeDelayBidPause();
       if (
         (await toConfirm.getAttribute("disabled")) !== null ||
@@ -428,7 +443,7 @@ export async function placeBidWithSharedContext(
       }
       await Promise.all([
         page.waitForURL(/propose_confirm/, { timeout: PROPOSE_NAV_TIMEOUT_MS }),
-        toConfirm.click(),
+        toConfirm.click({ force: true, timeout: 45_000 }),
       ]);
 
       // Step 2: 利用規約に同意して提案する
@@ -438,9 +453,11 @@ export async function placeBidWithSharedContext(
         state: "visible",
         timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
       });
-      await finish.scrollIntoViewIfNeeded();
+      await finish.evaluate((el: HTMLElement) =>
+        el.scrollIntoView({ block: "center", inline: "nearest" }),
+      );
       await maybeDelayBidPause();
-      await finish.click();
+      await finish.click({ force: true, timeout: 45_000 });
       await Promise.race([
         page.waitForURL(/propose_finish|mypage/, { timeout: 25_000 }),
         page.waitForLoadState("domcontentloaded", { timeout: 12_000 }),

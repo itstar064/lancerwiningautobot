@@ -1,7 +1,37 @@
+import * as fs from "fs";
 import config from "@/config";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright";
 
-let browser: Browser | null = null;
+/** Third-party scripts to abort when `LANCERS_BLOCK_STATIC_ASSETS` is on. */
+const TRACKER_SCRIPT_RE =
+  /googletagmanager\.com|google-analytics\.com|\/gtag\/js|googleadservices\.com|doubleclick\.net|facebook\.net\/|hotjar\.com|clarity\.ms|linkedin\.com\/px|segment\.(?:com|io)|fullstory\.com|browser-intake-datadog|sentry\.io/i;
+
+const installOptionalAssetBlocking = async (ctx: BrowserContext) => {
+  if (!config.LANCERS_BLOCK_STATIC_ASSETS) return;
+  await ctx.route("**/*", async (route) => {
+    const req = route.request();
+    const type = req.resourceType();
+    if (
+      type === "stylesheet" ||
+      type === "font" ||
+      type === "image" ||
+      type === "media"
+    ) {
+      await route.abort();
+      return;
+    }
+    if (type === "script" && TRACKER_SCRIPT_RE.test(req.url())) {
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  console.log(
+    "[SCRAPER] LANCERS_BLOCK_STATIC_ASSETS: blocking stylesheet/font/image/media + tracker scripts.",
+  );
+};
+
+/** Single persistent Chromium context (profile on disk). */
 let context: BrowserContext | null = null;
 let lastCookieHeader: string | null = null;
 let lockChain = Promise.resolve();
@@ -35,7 +65,7 @@ const performLogin = async (page: Page) => {
   await page.type("#UserPassword", config.PASSWORD, { delay: 25 });
 
   const navigationPromise = page
-    .waitForNavigation({ waitUntil: "networkidle", timeout: 45000 })
+    .waitForNavigation({ waitUntil: "domcontentloaded", timeout: 45000 })
     .catch(() => undefined);
   await page.click("#form_submit");
   try {
@@ -54,22 +84,51 @@ const performLogin = async (page: Page) => {
   }
 };
 
-const ensureContext = async () => {
-  if (!browser) {
-    browser = await chromium.launch({
-      headless: false,
-    });
-  }
-  if (!context) {
-    context = await browser.newContext();
-    const page = await context.newPage();
-    console.log("[SCRAPER] Logging in (shared Playwright context)…");
+const needsLogin = async (page: Page): Promise<boolean> => {
+  const url = page.url();
+  if (url.includes("/user/login")) return true;
+  const email = page.locator("#UserEmail, input#UserEmail");
+  if (await email.first().isVisible().catch(() => false)) return true;
+  return false;
+};
+
+/** Open mypage; if session from disk is valid, skip password login. */
+const ensureSessionOrLogin = async (page: Page) => {
+  await page.goto("https://www.lancers.jp/mypage", {
+    waitUntil: "domcontentloaded",
+    timeout: 45_000,
+  });
+
+  if (await needsLogin(page)) {
+    console.log("[SCRAPER] Persistent profile: session missing or expired → logging in…");
     await performLogin(page);
+  } else {
+    console.log(
+      `[SCRAPER] Persistent profile: reusing session (${config.LANCERS_BROWSER_USER_DATA_DIR})`,
+    );
+  }
+};
+
+const ensureContext = async () => {
+  if (!context) {
+    const userDataDir = config.LANCERS_BROWSER_USER_DATA_DIR;
+    fs.mkdirSync(userDataDir, { recursive: true });
+    console.log(
+      `[SCRAPER] Launching Chromium persistent context → ${userDataDir}`,
+    );
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: config.LANCERS_HEADLESS,
+      locale: "ja-JP",
+      viewport: { width: 1280, height: 800 },
+    });
+    await installOptionalAssetBlocking(context);
+    const page = await context.newPage();
+    await ensureSessionOrLogin(page);
     await page.close();
   }
 };
 
-/** Reset context (e.g. cookie expired) and log in again. */
+/** Close context and reopen; same profile dir reloads cookies from disk, then re-login if needed. */
 export const resetLancersContext = () =>
   runExclusive(async () => {
     if (context) {

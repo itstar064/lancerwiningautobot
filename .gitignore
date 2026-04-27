@@ -6,3 +6,5 @@ screenshots/
 /userdata
 /chrome_user_data
 /data
+# Playwright persistent login (sensitive); default lives under data/
+data/lancers-chromium-profile/

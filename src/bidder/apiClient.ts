@@ -18,6 +18,30 @@ export type ProjectLinksRequest = {
 const MIN_LEN = 50;
 const MAX_ATTEMPTS = 2;
 
+/** Local `data/template.txt` body (same rules as `BID_TEXT_SOURCE=template`). */
+const bidTextFromTemplate = (
+  job: ScrapedJobType,
+  reason: string,
+): string | null => {
+  const jobID = job.id || job.url.split("/").pop() || "";
+  const text = fillBidTemplate({
+    id: job.id,
+    title: job.title,
+    desc: job.desc,
+    price: job.price,
+    url: job.url,
+    category: job.category,
+  }).trim();
+  console.log(`[BID] ${reason} jobId=${jobID}`);
+  if (text.length < MIN_LEN) {
+    console.log(
+      `[BID] template.txt too short (${text.length} chars); min ${MIN_LEN}.`,
+    );
+    return null;
+  }
+  return text;
+};
+
 const pickString = (v: unknown): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 
@@ -120,30 +144,21 @@ export const generateBidFromAPI = async (
   const jobID = job.id || job.url.split("/").pop() || "";
 
   if (config.BID_TEXT_SOURCE === "template") {
-    const text = fillBidTemplate({
-      id: job.id,
-      title: job.title,
-      desc: job.desc,
-      price: job.price,
-      url: job.url,
-      category: job.category,
-    }).trim();
-    console.log(
-      `[BID] Using data/template.txt (BID_TEXT_SOURCE=template) jobId=${jobID}`,
+    return bidTextFromTemplate(
+      job,
+      "Using data/template.txt (BID_TEXT_SOURCE=template)",
     );
-    if (text.length < MIN_LEN) {
-      console.log(
-        `[BID] Template bid too short (${text.length} chars); min ${MIN_LEN}.`,
-      );
-      return null;
-    }
-    return text;
   }
 
   const url = config.BID_API_URL;
   if (!url) {
-    console.log("[API] BID_TEXT_SOURCE=api but BID_API_URL not set; skip.");
-    return null;
+    console.log(
+      "[API] BID_TEXT_SOURCE=api but BID_API_URL not set; fallback to template.txt.",
+    );
+    return bidTextFromTemplate(
+      job,
+      "Using data/template.txt (no BID_API_URL)",
+    );
   }
   const category = (job.category || "一般").replace(/\s+/g, " ").trim() || "一般";
 
@@ -182,7 +197,13 @@ export const generateBidFromAPI = async (
           `[API] HTTP ${res.status} for jobId=${jobID}; body preview: ${preview}`,
         );
         if (attempt < MAX_ATTEMPTS) continue;
-        return null;
+        console.log(
+          `[API] Giving up after HTTP errors; fallback to template.txt jobId=${jobID}`,
+        );
+        return bidTextFromTemplate(
+          job,
+          "Using data/template.txt (API HTTP error)",
+        );
       }
 
       const text = extractBidTextFromResponse(res.data).trim();
@@ -195,7 +216,13 @@ export const generateBidFromAPI = async (
           `[API] Response too short (${text.length} chars) or unparseable; raw≈ ${raw}`,
         );
         if (attempt < MAX_ATTEMPTS) continue;
-        return null;
+        console.log(
+          `[API] Giving up after short/unparseable body; fallback to template.txt jobId=${jobID}`,
+        );
+        return bidTextFromTemplate(
+          job,
+          "Using data/template.txt (API body too short or unparseable)",
+        );
       }
       return text;
     } catch (e) {
@@ -207,5 +234,11 @@ export const generateBidFromAPI = async (
     }
   }
   console.error("[API] All attempts failed:", lastErr);
-  return null;
+  console.log(
+    `[API] Network/exception fallback to template.txt jobId=${jobID}`,
+  );
+  return bidTextFromTemplate(
+    job,
+    "Using data/template.txt (API unreachable or threw)",
+  );
 };

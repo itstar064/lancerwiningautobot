@@ -1,3 +1,4 @@
+import * as path from "path";
 import { configDotenv } from "dotenv";
 import type { JobNotifyPriceMode } from "@/bidder/filters";
 import { parseJobNotifyPriceMode } from "@/bidder/filters";
@@ -73,6 +74,20 @@ if (BID_MAX_BUDGET_JPY < BID_MIN_BUDGET_JPY) {
   BID_MAX_BUDGET_JPY = BID_MIN_BUDGET_JPY;
 }
 
+/** Playwright persistent profile (cookies survive process restarts). */
+const _profileDir = (process.env.LANCERS_BROWSER_USER_DATA_DIR || "").trim();
+const LANCERS_BROWSER_USER_DATA_DIR = path.resolve(
+  _profileDir || path.join(process.cwd(), "data", "lancers-chromium-profile"),
+);
+const LANCERS_HEADLESS =
+  process.env.LANCERS_HEADLESS === "true" ||
+  process.env.LANCERS_HEADLESS === "1";
+
+/** Abort CSS/fonts/images + known tracker scripts in Playwright (may affect layout; opt-in). */
+const LANCERS_BLOCK_STATIC_ASSETS =
+  process.env.LANCERS_BLOCK_STATIC_ASSETS === "true" ||
+  process.env.LANCERS_BLOCK_STATIC_ASSETS === "1";
+
 let config_missing = false;
 
 if (!BOT_TOKEN) {
@@ -134,6 +149,12 @@ interface Config {
   /** Parsed listing budget high-end must be in [min, max] (yen) to auto-bid. */
   BID_MIN_BUDGET_JPY: number;
   BID_MAX_BUDGET_JPY: number;
+  /** Absolute path passed to `chromium.launchPersistentContext`. */
+  LANCERS_BROWSER_USER_DATA_DIR: string;
+  /** Headless persistent Chromium (default false so first login / verify_code is visible). */
+  LANCERS_HEADLESS: boolean;
+  /** When true, block stylesheets/fonts/images/media + tracker scripts in Lancers browser. */
+  LANCERS_BLOCK_STATIC_ASSETS: boolean;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -164,6 +185,9 @@ const config: Config = {
   JOB_NOTIFY_PRICE,
   BID_MIN_BUDGET_JPY,
   BID_MAX_BUDGET_JPY,
+  LANCERS_BROWSER_USER_DATA_DIR,
+  LANCERS_HEADLESS,
+  LANCERS_BLOCK_STATIC_ASSETS,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };
