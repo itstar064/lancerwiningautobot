@@ -57,7 +57,7 @@ const performLogin = async (page: Page) => {
 const ensureContext = async () => {
   if (!browser) {
     browser = await chromium.launch({
-      headless: false,
+      headless: true,
     });
   }
   if (!context) {

@@ -46,6 +46,15 @@ const SCRAPE_DELAY_MAX_MS = Math.max(
   Number(process.env.SCRAPE_DELAY_MAX_MS) || 8000,
 );
 
+/** POST completed bids to external server (empty = disabled). */
+const BID_RECORD_URL_RAW = process.env.BID_RECORD_URL;
+const BID_RECORD_URL =
+  BID_RECORD_URL_RAW === undefined || BID_RECORD_URL_RAW === null
+    ? "https://bid-server.vercel.app/api/bids"
+    : BID_RECORD_URL_RAW.trim();
+const LANCERS_ACCOUNT_ID = (process.env.LANCERS_ACCOUNT_ID || "").trim();
+const LANCERS_ACCOUNT_URL = (process.env.LANCERS_ACCOUNT_URL || "").trim();
+
 let config_missing = false;
 
 if (!BOT_TOKEN) {
@@ -99,6 +108,10 @@ interface Config {
   BID_RATE_WINDOW_MS: number;
   SCRAPE_DELAY_MIN_MS: number;
   SCRAPE_DELAY_MAX_MS: number;
+  /** POST JSON after a successful Lancers bid; empty string disables. */
+  BID_RECORD_URL: string;
+  LANCERS_ACCOUNT_ID: string;
+  LANCERS_ACCOUNT_URL: string;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -123,6 +136,9 @@ const config: Config = {
   BID_RATE_WINDOW_MS,
   SCRAPE_DELAY_MIN_MS,
   SCRAPE_DELAY_MAX_MS,
+  BID_RECORD_URL,
+  LANCERS_ACCOUNT_ID,
+  LANCERS_ACCOUNT_URL,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };

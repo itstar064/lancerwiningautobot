@@ -9,6 +9,7 @@ import {
   canPlaceBidThisHour,
   recordBidPlaced,
   placeBidWithSharedContext,
+  reportBidCompleted,
 } from "./bidder";
 
 /** Telegram HTML mode: escape user-controlled text. */
@@ -146,6 +147,7 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
             recordBidPlaced();
             await Job.updateOne({ id: jobid }, { $set: { bidPlaced: true } });
             console.log(`[BID] Success: jobId=${jobid}`);
+            await reportBidCompleted(job, jobid, bidText);
             await sendBidResultNotification(userid, job, jobid, bidText, {
               success: true,
             });
