@@ -1,7 +1,8 @@
 import { configDotenv } from "dotenv";
+import type { JobNotifyPriceMode } from "@/bidder/filters";
+import { parseJobNotifyPriceMode } from "@/bidder/filters";
 
 configDotenv();
-
 const PORT = process.env.PORT || "5000";
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -54,6 +55,11 @@ const BID_RECORD_URL =
     : BID_RECORD_URL_RAW.trim();
 const LANCERS_ACCOUNT_ID = (process.env.LANCERS_ACCOUNT_ID || "").trim();
 const LANCERS_ACCOUNT_URL = (process.env.LANCERS_ACCOUNT_URL || "").trim();
+
+/** New job Telegram + bid: `any` = all, `set` = only 0~200,000 円相当の掲示予算 (any | set, alias set: budget). */
+const JOB_NOTIFY_PRICE: JobNotifyPriceMode = parseJobNotifyPriceMode(
+  process.env.JOB_NOTIFY_PRICE,
+);
 
 let config_missing = false;
 
@@ -112,6 +118,8 @@ interface Config {
   BID_RECORD_URL: string;
   LANCERS_ACCOUNT_ID: string;
   LANCERS_ACCOUNT_URL: string;
+  /** Filter new-job Telegram + bid path by listing 報酬 line present or not. */
+  JOB_NOTIFY_PRICE: JobNotifyPriceMode;
   PROXY: string | undefined;
   PROXY_AUTH: { username: string; password: string } | undefined;
 }
@@ -139,6 +147,7 @@ const config: Config = {
   BID_RECORD_URL,
   LANCERS_ACCOUNT_ID,
   LANCERS_ACCOUNT_URL,
+  JOB_NOTIFY_PRICE,
   PROXY: process.env.PROXY,
   PROXY_AUTH: process.env.PROXY_AUTH ? JSON.parse(process.env.PROXY_AUTH) : undefined,
 };

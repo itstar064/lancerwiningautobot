@@ -10,6 +10,7 @@ import {
   recordBidPlaced,
   placeBidWithSharedContext,
   reportBidCompleted,
+  jobPassesPopupPriceFilter,
 } from "./bidder";
 
 /** Telegram HTML mode: escape user-controlled text. */
@@ -73,86 +74,92 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
     if (inserted) {
       console.log(`[SCRAPER] New job: ${jobid} — ${job.title}`);
 
-      const maxLen = job.employerAvatar
-        ? TELEGRAM_CAPTION_MAX
-        : TELEGRAM_MESSAGE_MAX;
-
-      let message = `🔉 <b>${escapeTelegramHtml(job.title)}</b>\n\n`;
-
-      if (jobid) {
-        message += `<b>ID:</b> ${escapeTelegramHtml(jobid)}\n`;
-        message += `<b>依頼者:</b> ${escapeTelegramHtml(job.employer)}\n`;
-      }
-
-      if (job.category) {
-        message += `<b>カテゴリ:</b> ${escapeTelegramHtml(job.category)}\n`;
-      }
-
-      if (job.daysLeft) {
-        message += `<b>期間:</b> ${escapeTelegramHtml(job.daysLeft)}\n`;
-      }
-
-      if (job.price) {
-        message += `<b>報酬:</b> ${escapeTelegramHtml(job.price)}円\n`;
-      }
-
-      const linkFooter = job.url
-        ? `\n\n<a href="${escapeHref(job.url)}">案件ページ</a>`
-        : "";
-
-      if (job.desc) {
-        const header = "\n<b>概要:</b>\n";
-        const plain = job.desc.replace(/\s+/g, " ").trim();
-        const budget =
-          maxLen - message.length - header.length - linkFooter.length;
-        const ellipsis = "…";
-
-        if (budget > 0 && plain) {
-          let snippet = "";
-          for (let len = plain.length; len >= 0; len--) {
-            const cand =
-              len === plain.length ? plain : plain.slice(0, len) + ellipsis;
-            if (escapeTelegramHtml(cand).length <= budget) {
-              snippet = cand;
-              break;
-            }
-          }
-          if (snippet) {
-            message += header + escapeTelegramHtml(snippet);
-          }
-        }
-      }
-
-      if (linkFooter) {
-        message += linkFooter;
-      }
-
-      await sendMessage(userid, message, job.employerAvatar);
-
-      if (!shouldBid(job)) {
+      if (!jobPassesPopupPriceFilter(job, config.JOB_NOTIFY_PRICE)) {
         console.log(
-          `[BID] Skipped: filters (price empty, proposals>=30, or desc<=50) jobId=${jobid}`,
-        );
-      } else if (!canPlaceBidThisHour()) {
-        console.log(
-          `[BID] Skipped: bid rate limit (${config.BID_MAX_PER_WINDOW} per ${config.BID_RATE_WINDOW_MS}ms); jobId=${jobid}`,
+          `[NOTIFY] Skip popup (JOB_NOTIFY_PRICE=${config.JOB_NOTIFY_PRICE} — set=0~200000円の掲示予算のみ); jobId=${jobid}`,
         );
       } else {
-        const bidText = await generateBidFromAPI(job);
-        if (!bidText) {
-          console.log(`[BID] Skipped: no API text (null/short); jobId=${jobid}`);
+        const maxLen = job.employerAvatar
+          ? TELEGRAM_CAPTION_MAX
+          : TELEGRAM_MESSAGE_MAX;
+
+        let message = `🔉 <b>${escapeTelegramHtml(job.title)}</b>\n\n`;
+
+        if (jobid) {
+          message += `<b>ID:</b> ${escapeTelegramHtml(jobid)}\n`;
+          message += `<b>依頼者:</b> ${escapeTelegramHtml(job.employer)}\n`;
+        }
+
+        if (job.category) {
+          message += `<b>カテゴリ:</b> ${escapeTelegramHtml(job.category)}\n`;
+        }
+
+        if (job.daysLeft) {
+          message += `<b>期間:</b> ${escapeTelegramHtml(job.daysLeft)}\n`;
+        }
+
+        if (job.price) {
+          message += `<b>報酬:</b> ${escapeTelegramHtml(job.price)}円\n`;
+        }
+
+        const linkFooter = job.url
+          ? `\n\n<a href="${escapeHref(job.url)}">案件ページ</a>`
+          : "";
+
+        if (job.desc) {
+          const header = "\n<b>概要:</b>\n";
+          const plain = job.desc.replace(/\s+/g, " ").trim();
+          const budget =
+            maxLen - message.length - header.length - linkFooter.length;
+          const ellipsis = "…";
+
+          if (budget > 0 && plain) {
+            let snippet = "";
+            for (let len = plain.length; len >= 0; len--) {
+              const cand =
+                len === plain.length ? plain : plain.slice(0, len) + ellipsis;
+              if (escapeTelegramHtml(cand).length <= budget) {
+                snippet = cand;
+                break;
+              }
+            }
+            if (snippet) {
+              message += header + escapeTelegramHtml(snippet);
+            }
+          }
+        }
+
+        if (linkFooter) {
+          message += linkFooter;
+        }
+
+        await sendMessage(userid, message, job.employerAvatar);
+
+        if (!shouldBid(job)) {
+          console.log(
+            `[BID] Skipped: filters (price empty, proposals>=30, or desc<=50) jobId=${jobid}`,
+          );
+        } else if (!canPlaceBidThisHour()) {
+          console.log(
+            `[BID] Skipped: bid rate limit (${config.BID_MAX_PER_WINDOW} per ${config.BID_RATE_WINDOW_MS}ms); jobId=${jobid}`,
+          );
         } else {
-          const ok = await placeBidWithSharedContext(job, bidText);
-          if (ok) {
-            recordBidPlaced();
-            await Job.updateOne({ id: jobid }, { $set: { bidPlaced: true } });
-            console.log(`[BID] Success: jobId=${jobid}`);
-            await reportBidCompleted(job, jobid, bidText);
-            await sendBidResultNotification(userid, job, jobid, bidText, {
-              success: true,
-            });
+          const bidText = await generateBidFromAPI(job);
+          if (!bidText) {
+            console.log(`[BID] Skipped: no API text (null/short); jobId=${jobid}`);
           } else {
-            console.log(`[BID] Failed or ambiguous: jobId=${jobid}`);
+            const ok = await placeBidWithSharedContext(job, bidText);
+            if (ok) {
+              recordBidPlaced();
+              await Job.updateOne({ id: jobid }, { $set: { bidPlaced: true } });
+              console.log(`[BID] Success: jobId=${jobid}`);
+              await reportBidCompleted(job, jobid, bidText);
+              await sendBidResultNotification(userid, job, jobid, bidText, {
+                success: true,
+              });
+            } else {
+              console.log(`[BID] Failed or ambiguous: jobId=${jobid}`);
+            }
           }
         }
       }
