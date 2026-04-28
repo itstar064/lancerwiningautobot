@@ -146,10 +146,15 @@ const processScrapedJob = async (userid: string, jobs: ScrapedJobType[]) => {
           job,
           config.BID_MIN_BUDGET_JPY,
           config.BID_MAX_BUDGET_JPY,
+          config.JOB_NOTIFY_PRICE === "any",
         );
         if (bidSkipReason) {
           console.log(
-            `[BID] Skipped: ${bidSkipReason} (range ${config.BID_MIN_BUDGET_JPY}-${config.BID_MAX_BUDGET_JPY} jpy) jobId=${jobid}`,
+            `[BID] Skipped: ${bidSkipReason}${
+              config.JOB_NOTIFY_PRICE === "any"
+                ? ""
+                : ` (range ${config.BID_MIN_BUDGET_JPY}-${config.BID_MAX_BUDGET_JPY} jpy)`
+            } jobId=${jobid}`,
           );
         } else if (!canPlaceBidThisHour()) {
           console.log(

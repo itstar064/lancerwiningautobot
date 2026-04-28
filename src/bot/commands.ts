@@ -115,10 +115,13 @@ const setup_commands = async (bot: Telegraf) => {
             job,
             config.BID_MIN_BUDGET_JPY,
             config.BID_MAX_BUDGET_JPY,
+            config.JOB_NOTIFY_PRICE === "any",
           )
         ) {
           await ctx.answerCbQuery(
-            `Budget outside ${config.BID_MIN_BUDGET_JPY}–${config.BID_MAX_BUDGET_JPY} JPY (parsed from listing).`,
+            config.JOB_NOTIFY_PRICE === "any"
+              ? "Budget check failed."
+              : `Budget outside ${config.BID_MIN_BUDGET_JPY}–${config.BID_MAX_BUDGET_JPY} JPY (parsed from listing).`,
           );
           console.log(
             `[BID] Skipped (manual): budget range jobId=${clickedChatId}`,

@@ -95,13 +95,15 @@ export const getMaxListingBudgetJPY = (priceText: string): number | null => {
 
 /**
  * Reason auto-bid is skipped, or `null` if listing max budget is in [minJpy, maxJpy].
- * Compares parsed listing **high-end** budget to env `BID_MIN_BUDGET_JPY` / `BID_MAX_BUDGET_JPY`.
+ * When `ignoreListingBudget` is true (`JOB_NOTIFY_PRICE=any`), skip all budget / unparseable checks.
  */
 export const getBidSkipReason = (
   job: ScrapedJobType,
   minJpy: number,
   maxJpy: number,
+  ignoreListingBudget = false,
 ): string | null => {
+  if (ignoreListingBudget) return null;
   const maxVal = getMaxListingBudgetJPY(job.price);
   if (maxVal === null) {
     return `budget_unparseable(cannot_verify_range_${minJpy}_${maxJpy}_jpy)`;
@@ -120,4 +122,6 @@ export const shouldBid = (
   job: ScrapedJobType,
   minJpy: number,
   maxJpy: number,
-): boolean => getBidSkipReason(job, minJpy, maxJpy) === null;
+  ignoreListingBudget = false,
+): boolean =>
+  getBidSkipReason(job, minJpy, maxJpy, ignoreListingBudget) === null;

@@ -62,11 +62,26 @@ const JOB_NOTIFY_PRICE: JobNotifyPriceMode = parseJobNotifyPriceMode(
   process.env.JOB_NOTIFY_PRICE,
 );
 
-const _bidMin = Number(process.env.BID_MIN_BUDGET_JPY);
-const _bidMax = Number(process.env.BID_MAX_BUDGET_JPY);
-let BID_MIN_BUDGET_JPY =
-  Number.isFinite(_bidMin) && _bidMin >= 0 ? Math.floor(_bidMin) : 0;
-let BID_MAX_BUDGET_JPY = Number.isFinite(_bidMax) && _bidMax >= 0 ? Math.floor(_bidMax) : 200_000;
+/** Empty env becomes `Number("") === 0` — must not treat as valid budget. */
+const parseBudgetJPY = (
+  raw: string | undefined,
+  fallback: number,
+): number => {
+  const s = (raw ?? "").trim();
+  if (s === "") return fallback;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.floor(n));
+};
+
+let BID_MIN_BUDGET_JPY = parseBudgetJPY(process.env.BID_MIN_BUDGET_JPY, 0);
+let BID_MAX_BUDGET_JPY = parseBudgetJPY(process.env.BID_MAX_BUDGET_JPY, 200_000);
+if (BID_MAX_BUDGET_JPY <= 0) {
+  console.warn(
+    "[CONFIG] BID_MAX_BUDGET_JPY missing or invalid; using default 200000.",
+  );
+  BID_MAX_BUDGET_JPY = 200_000;
+}
 if (BID_MAX_BUDGET_JPY < BID_MIN_BUDGET_JPY) {
   console.warn(
     "[CONFIG] BID_MAX_BUDGET_JPY < BID_MIN_BUDGET_JPY; clamping max to min.",
