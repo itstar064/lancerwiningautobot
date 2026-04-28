@@ -2,7 +2,7 @@ import { getEstimateTemplate } from "./templates";
 import { runExclusive, getSharedContext } from "@/browser/lancersContext";
 import { delay } from "@/utils";
 import type { ScrapedJobType } from "@/types/job";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import config from "@/config";
 import { getMaxListingBudgetJPY } from "./filters";
 
@@ -198,27 +198,62 @@ const findPrimarySubmit = (
 ) => {
   if (kind === "confirm") {
     return page
-      .getByRole("button", { name: /内容を確認/ })
-      .or(page.locator('input[type="submit"][value="内容を確認する"]'))
+      .getByRole("button", { name: /内容を確認|確認画面|確認へ/ })
+      .or(page.locator('input[type="submit"][value*="確認"]'))
       .or(
         page.locator(
           'button[type="submit"]',
-          { hasText: "内容を確認" },
+          { hasText: /内容を確認|確認画面|確認へ/ },
         ),
       );
   }
   return page
-    .getByRole("button", { name: /利用規約に同意/ })
+    .getByRole("button", { name: /利用規約に同意|提案する|送信|応募/ })
     .or(
       page.locator(
-        'input[type="submit"][value="利用規約に同意して提案する"]',
+        'input[type="submit"][value*="利用規約に同意"], input[type="submit"][value*="提案"], input[type="submit"][value*="送信"], input[type="submit"][value*="応募"]',
       ),
     )
     .or(
       page.locator("button[type=submit]", {
-        hasText: "利用規約に同意",
+        hasText: /利用規約に同意|提案する|送信|応募/,
       }),
     );
+};
+
+const pickVisibleSubmitButton = async (
+  page: Page,
+  kind: "confirm" | "finish",
+  timeoutMs = PROPOSE_FORM_ACTION_TIMEOUT_MS,
+): Promise<Locator> => {
+  const started = Date.now();
+  const primary = findPrimarySubmit(page, kind).first();
+  const fallbackCandidates: Locator[] =
+    kind === "confirm"
+      ? [
+          page.locator("#ProposalProposeForm button[type='submit']").first(),
+          page.locator("#ProposalProposeForm input[type='submit']").first(),
+          page.locator("form[action*='propose'] button[type='submit']").first(),
+          page.locator("form[action*='propose'] input[type='submit']").first(),
+        ]
+      : [
+          page.locator("button[type='submit']").first(),
+          page.locator("input[type='submit']").first(),
+        ];
+
+  while (Date.now() - started < timeoutMs) {
+    const isPrimaryVisible = await primary.isVisible().catch(() => false);
+    if (isPrimaryVisible) {
+      return primary;
+    }
+    for (const c of fallbackCandidates) {
+      if (await c.isVisible().catch(() => false)) {
+        return c;
+      }
+    }
+    await page.waitForTimeout(150);
+  }
+  throw new Error(`Submit button not visible (${kind}) within ${timeoutMs}ms`);
 };
 
 const scrollProposeFormFooter = async (page: Page) => {
@@ -419,11 +454,7 @@ export async function placeBidWithSharedContext(
 
       // Step 1: 内容を確認 (button or input; footer may be off-screen)
       await scrollProposeFormFooter(page);
-      const toConfirm = findPrimarySubmit(page, "confirm").first();
-      await toConfirm.waitFor({
-        state: "visible",
-        timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
-      });
+      const toConfirm = await pickVisibleSubmitButton(page, "confirm");
       await toConfirm.evaluate((el: HTMLElement) =>
         el.scrollIntoView({ block: "center", inline: "nearest" }),
       );
@@ -448,11 +479,7 @@ export async function placeBidWithSharedContext(
 
       // Step 2: 利用規約に同意して提案する
       await scrollProposeFormFooter(page);
-      const finish = findPrimarySubmit(page, "finish").first();
-      await finish.waitFor({
-        state: "visible",
-        timeout: PROPOSE_FORM_ACTION_TIMEOUT_MS,
-      });
+      const finish = await pickVisibleSubmitButton(page, "finish");
       await finish.evaluate((el: HTMLElement) =>
         el.scrollIntoView({ block: "center", inline: "nearest" }),
       );
