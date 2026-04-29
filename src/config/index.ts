@@ -57,6 +57,13 @@ const BID_RECORD_URL =
 const LANCERS_ACCOUNT_ID = (process.env.LANCERS_ACCOUNT_ID || "").trim();
 const LANCERS_ACCOUNT_URL = (process.env.LANCERS_ACCOUNT_URL || "").trim();
 
+/** POST `{ proposalsUrl, userId }` → `{ [userId]: rank }`. Empty string disables rank fetch. */
+const _bidRanksUrl = process.env.BID_RANKS_API_URL;
+const BID_RANKS_API_URL =
+  _bidRanksUrl === undefined || _bidRanksUrl === null
+    ? "http://213.210.13.163:3003/api/lancers/bid-ranks"
+    : _bidRanksUrl.trim();
+
 /** New job Telegram: `any` = all listings; `set` = only jobs whose parsed budget fits [min,max]. */
 const JOB_NOTIFY_PRICE: JobNotifyPriceMode = parseJobNotifyPriceMode(
   process.env.JOB_NOTIFY_PRICE,
@@ -160,6 +167,8 @@ interface Config {
   BID_RECORD_URL: string;
   LANCERS_ACCOUNT_ID: string;
   LANCERS_ACCOUNT_URL: string;
+  /** Rank API base URL; empty = skip fetching `bid_place_number`. */
+  BID_RANKS_API_URL: string;
   JOB_NOTIFY_PRICE: JobNotifyPriceMode;
   /** Parsed listing budget high-end must be in [min, max] (yen) to auto-bid. */
   BID_MIN_BUDGET_JPY: number;
@@ -197,6 +206,7 @@ const config: Config = {
   BID_RECORD_URL,
   LANCERS_ACCOUNT_ID,
   LANCERS_ACCOUNT_URL,
+  BID_RANKS_API_URL,
   JOB_NOTIFY_PRICE,
   BID_MIN_BUDGET_JPY,
   BID_MAX_BUDGET_JPY,

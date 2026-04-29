@@ -12,9 +12,74 @@ export type BidRecordPayload = {
   bid_content: string;
   budget: string;
   bid_time: string;
+  is_bot: string;
+  bid_place_number: number | null;
 };
 
 const RECORD_TIMEOUT_MS = 20_000;
+
+function parseRankFromResponse(
+  data: unknown,
+  userId: string,
+): number | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const row = data as Record<string, unknown>;
+  const raw = row[userId];
+  if (typeof raw === "number" && Number.isFinite(raw)) return Math.floor(raw);
+  if (typeof raw === "string") {
+    const n = Number(raw.trim());
+    if (Number.isFinite(n)) return Math.floor(n);
+  }
+  return null;
+}
+
+/**
+ * POST rank service with proposals page URL + Lancers account id (same as LANCERS_ACCOUNT_ID).
+ */
+export async function fetchBidPlaceNumber(jobId: string): Promise<number | null> {
+  const url = config.BID_RANKS_API_URL;
+  if (!url) return null;
+  const userId = config.LANCERS_ACCOUNT_ID;
+  if (!userId) return null;
+
+  const proposalsUrl = `https://www.lancers.jp/work/proposals/${jobId}`;
+  try {
+    const res = await axios.post<unknown>(
+      url,
+      { proposalsUrl, userId },
+      {
+        timeout: RECORD_TIMEOUT_MS,
+        headers: { "content-type": "application/json" },
+        validateStatus: () => true,
+      },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      const preview =
+        typeof res.data === "string"
+          ? res.data.slice(0, 200)
+          : JSON.stringify(res.data).slice(0, 200);
+      console.warn(
+        `[BID-RANK] HTTP ${res.status} jobId=${jobId}; preview: ${preview}`,
+      );
+      return null;
+    }
+    const rank = parseRankFromResponse(res.data, userId);
+    if (rank == null) {
+      console.warn(
+        `[BID-RANK] No rank for userId=${userId} jobId=${jobId}; body=${JSON.stringify(res.data).slice(0, 200)}`,
+      );
+    } else {
+      console.log(`[BID-RANK] jobId=${jobId} rank=${rank}`);
+    }
+    return rank;
+  } catch (e) {
+    console.warn(
+      `[BID-RANK] Failed jobId=${jobId}:`,
+      (e as Error).message,
+    );
+    return null;
+  }
+}
 
 /**
  * Notify bid-server after a successful Lancers proposal.
@@ -40,6 +105,8 @@ export async function reportBidCompleted(
       ? job.url.trim()
       : `https://www.lancers.jp/work/detail/${jobId}`;
 
+  const bidPlaceNumber = await fetchBidPlaceNumber(jobId);
+
   const payload: BidRecordPayload = {
     platform: "lancers",
     account_id: config.LANCERS_ACCOUNT_ID,
@@ -49,6 +116,8 @@ export async function reportBidCompleted(
     bid_content: bidContent,
     budget: String(pickMilestoneAmountJPY(job.price)),
     bid_time: new Date().toISOString(),
+    is_bot: "true",
+    bid_place_number: bidPlaceNumber,
   };
 
   try {
@@ -67,7 +136,10 @@ export async function reportBidCompleted(
       );
       return;
     }
-    console.log(`[BID-RECORD] Posted jobId=${jobId}`);
+    console.log(
+      `[BID-RECORD] Posted jobId=${jobId}` +
+        (bidPlaceNumber != null ? ` bid_place_number=${bidPlaceNumber}` : ""),
+    );
   } catch (e) {
     console.error(
       `[BID-RECORD] Failed jobId=${jobId}:`,
